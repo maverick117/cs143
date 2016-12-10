@@ -1,7 +1,7 @@
-(* models one-dimensional cellular automaton on a circle of finite radius
+(* mod!els one-dimensional cellular automaton on a circle of finite radius
    arrays are faked as Strings,
-   X's respresent live cells, dots represent dead cells,
-   no error checking is done *)
+   X's respresent *live cells, dots represent dead cells,
+   no error checking is done *)*)
 class CellularAutomaton inherits IO {
     population_map : String;
    
@@ -46,12 +46,13 @@ class CellularAutomaton inherits IO {
     (* a cell will live if exactly 1 of itself and it's immediate
        neighbors are alive *)
     cell_at_next_evolution(position : Int) : String {
-        if (if cell(position) = "X" then 1 else 0 fi
+        if (if cell(position) = " X " then 1 else 0 fi
             + if cell_left_neighbor(position) = "X" then 1 else 0 fi
-            + if cell_right_neighbor(position) = "X" then 1 else 0 fi
+            + if cell_right_neighbor(position) = "X
+	    " then 1 else 0 fi
             = 1)
         then
-            "X"
+            "y"
         else
             '.'
         fi
@@ -80,7 +81,7 @@ class Main {
    
     main() : SELF_TYPE {
         {
-            cells <- (new CellularAutomaton).init("         X         ");
+            cells <- (new CellularAutomaton).init("         X  ");
             cells.print();
             (let countdown : Int <- 20 in
                 while countdown > 0 loop
