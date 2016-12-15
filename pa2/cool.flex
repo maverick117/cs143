@@ -49,7 +49,8 @@ extern YYSTYPE cool_yylval;
 /*
  *  Add Your own definitions here
  */
-int add_string(char *s, bool more);
+int add_string(char *s);
+int commentCounter = 0;
 
 %}
 
@@ -66,14 +67,16 @@ CHAR            [^\n\"]
  /*
   *  Nested comments
   */
+<COMMENT>[^\*\)\(\n]*  {}
+<COMMENT>\*            {}
+<COMMENT>\(            {}
+<COMMENT>\)            {}
 
-
-<COMMENT>\*\)               {BEGIN 0;}
-<COMMENT>[^*]*              { }
-<COMMENT>\(\*               { }
-<COMMENT>\*                 { }
+<COMMENT>\*\)          {commentCounter--;if(commentCounter<0){cool_yylval.error_msg = "Unmatched *)"; return ERROR;} else if (commentCounter==0){BEGIN 0;}}
 <COMMENT><<EOF>>            {if (!eof){cool_yylval.error_msg = "EOF in comment";eof=true;return ERROR;}else{return 0;}}
-\(\*                        {BEGIN COMMENT;}
+\(\*                   {commentCounter++;BEGIN COMMENT;}
+\*\)                   {cool_yylval.error_msg = "Unmatched *)"; return ERROR;}
+<INITIAL>--[^\n]*   { }
 
  /*
   *  String constants (C syntax)
@@ -81,8 +84,9 @@ CHAR            [^\n\"]
   *  \n \t \b \f, the result is c.
   *
   */
-<STRING>{CHAR}*\"   { int code = add_string(yytext, false); if(code) return code; }
-<STRING>{CHAR}*\n   { int code = add_string(yytext, true); if (code) return code; }
+<STRING>{CHAR}*\"   { int code = add_string(yytext ); if(code) return code; }
+<STRING>{CHAR}*\n   { int code = add_string(yytext); if (code) return code; }
+<STRING>{CHAR}*[^{CHAR}]     { cool_yylval.error_msg = "asdf"; return ERROR;}
 \"                  { string_buf_ptr = string_buf; BEGIN STRING; }
 
 
@@ -107,16 +111,14 @@ CHAR            [^\n\"]
 \=                       { return '=';  }
 \,                       { return ',';  }
 
-true                    { cool_yylval.boolean = true ; return BOOL_CONST;}
-false                   { cool_yylval.boolean = false; return BOOL_CONST;}
-[A-Z]([A-Za-z_])+       { cool_yylval.symbol = stringtable.add_string(yytext); return TYPEID;}
-[0-9]+                  { cool_yylval.symbol = inttable.add_string(yytext); return INT_CONST;}
 
  /*
   * Keywords are case-insensitive except for the values true and false,
   * which must begin with a lower-case letter.
   */
 
+t[r|R][u|U][e|E]                   { cool_yylval.boolean = true ; return BOOL_CONST;}
+f[a|A][l|L][s|S][e|E]                   { cool_yylval.boolean = false; return BOOL_CONST;}
 [C|c][l|L][a|A][S|s][S|s]                { return CLASS; }
 [E|e][l|L][s|S][e|E]                     { return ELSE;  }
 [F|f][I|i]                               { return FI; }
@@ -136,37 +138,23 @@ false                   { cool_yylval.boolean = false; return BOOL_CONST;}
 \<\-                                     { return ASSIGN; }
 \<\=                                     { return LE; }
 =>                                       { return DARROW; }
---.*$                                    { }
-not                                      { return NOT; }
+[n|N][O|o][T|t]                          { return NOT; }
 
-[a-z]([A-Za-z_0-9])+     { cool_yylval.symbol = stringtable.add_string(yytext); return OBJECTID;}
+[a-z]([A-Za-z_0-9])*     { cool_yylval.symbol = stringtable.add_string(yytext); return OBJECTID;}
+[A-Z]([A-Za-z_0-9])*       { cool_yylval.symbol = stringtable.add_string(yytext); return TYPEID;}
+[0-9]+                  { cool_yylval.symbol = inttable.add_string(yytext); return INT_CONST;}
 
-
-\*\)                     {cool_yylval.error_msg = "Unmatched *)"; return ERROR;}
-
-[ \t]+                    { }
+[ \t\f\v\r]+              { }
 \n                        {curr_lineno++;}
-\[|\]|\'|!|$|%|&|~|\||#|^|\>  {cool_yylval.error_msg = yytext; return ERROR;}
+[^a-zA-Z0-9]              {cool_yylval.error_msg = yytext; return ERROR;}
 
 
 %%
 
-int add_string(char *s, bool more)
+int add_string(char *s)
 {
     size_t size = strlen(s);
-    bool slashQuote = size >= 2 && s[size-2] == '\\';
-
-    if (more){
-        if(s[size-2] != '\\'){
-	    reset_state();
-	    cool_yylval.error_msg = "Unterminated string constant";
-	    return ERROR;
-	}
-	size -= 2;
-    } 
-
-    if (!slashQuote)
-	size--;
+    bool more = false;
 
     for(size_t i = 0;i<size;i++){
 	if (string_buf_ptr - string_buf >= MAX_STR_CONST){
@@ -175,25 +163,50 @@ int add_string(char *s, bool more)
 	    return ERROR;
 	}
 	if (s[i] == '\\'){
+	    if (s[i+1] == 'b'){
+		*string_buf_ptr = '\b';
+	    } else if (s[i+1] == 'f'){
+		*string_buf_ptr = '\f';
+	    } else if (s[i+1] == 'n'){
+		*string_buf_ptr = '\n';
+            } else if (s[i+1] == '\n'){
+		*string_buf_ptr = '\n';
+		more = true;
+	    }else if (s[i+1] == 't'){
+		*string_buf_ptr = '\t';
+            } else if (s[i+1] == 'v'){
+		*string_buf_ptr = '\v';
+	    } else if (s[i+1] == '\"'){
+		*string_buf_ptr = '\"';
+		more = true;
+	    }else {
+		*string_buf_ptr = s[i+1];
+            }
+	    string_buf_ptr++;
+	    i++;
 	    continue;
         }
-	if (s[i] == '\0'){
-	    cool_yylval.error_msg = "String contains null character";
+
+	if (s[i] == '\"'){
+	    cool_yylval.symbol = stringtable.add_string(string_buf);
 	    reset_state();
+	    return STR_CONST;
+	} 
+
+        if (s[i] == '\n'){
+	    reset_state();
+	    cool_yylval.error_msg = "Unterminated string constant";
 	    return ERROR;
-        }
-	if (s[i] == EOF){
-	    printf("ok\n");
-        }
+	} 
 	*string_buf_ptr = s[i];
 	string_buf_ptr++;
     }
 
-    if (!more && !slashQuote){
-	cool_yylval.symbol = stringtable.add_string(string_buf);
+    if (!more){
+	cool_yylval.error_msg = "String contains null character";
 	reset_state();
-	return STR_CONST;
-    }
+	return ERROR;
+    } 
 
     return 0;
 
