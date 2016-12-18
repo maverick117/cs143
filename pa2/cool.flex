@@ -7,6 +7,7 @@
  *  output, so headers and global definitions are placed here to be visible
  * to the code in the file.  Don't remove anything that was here initially
  */
+
 %{
 #include <cool-parse.h>
 #include <stringtab.h>
@@ -35,11 +36,6 @@ char string_buf[MAX_STR_CONST]; /* to assemble string constants */
 char *string_buf_ptr;
 bool eof = false;
 
-void reset_state(){
-    memset(string_buf, 0, sizeof(string_buf));
-    string_buf_ptr = string_buf;
-    BEGIN 0;
-}
 
 extern int curr_lineno;
 extern int verbose_flag;
@@ -49,7 +45,22 @@ extern YYSTYPE cool_yylval;
 /*
  *  Add Your own definitions here
  */
-int add_string(char *s);
+
+/**
+ * Nest a comment when find one
+**/
+int nestComment(void);
+
+/**
+ * Add a string constant to the table. This checks for all the cases
+**/
+int addString(char *s);
+
+/**
+ * Add a string constant to the table. This checks for all the cases
+**/
+void resetState();
+
 int commentCounter = 0;
 
 %}
@@ -60,6 +71,13 @@ int commentCounter = 0;
 
 DARROW          =>
 CHAR            [^\n\"]
+SINGLE_TOKEN    (\+|\*|\-|\~|\/|\;|\(|\)|\{|\}|\:|\.|\@|\<|\=|\,)
+ID              [a-z]([A-Za-z_0-9])*  
+TYPE            [A-Z]([A-Za-z_0-9])* 
+NUMBER          [0-9]+               
+SPACE           [ \t\f\v\r]+
+INVALID         [^a-zA-Z0-9]
+
 %STATE          COMMENT STRING
 
 %%
@@ -67,16 +85,17 @@ CHAR            [^\n\"]
  /*
   *  Nested comments
   */
-<COMMENT>[^\*\)\(\n]*  {}
-<COMMENT>\*            {}
-<COMMENT>\(            {}
-<COMMENT>\)            {}
+<COMMENT>[^\*\)\(\n]*  { }
+<COMMENT>\*            { }
+<COMMENT>\(            { }
+<COMMENT>\)            { }
 
-<COMMENT>\*\)          {commentCounter--;if(commentCounter<0){cool_yylval.error_msg = "Unmatched *)"; return ERROR;} else if (commentCounter==0){BEGIN 0;}}
-<COMMENT><<EOF>>            {if (!eof){cool_yylval.error_msg = "EOF in comment";eof=true;return ERROR;}else{return 0;}}
-\(\*                   {commentCounter++;BEGIN COMMENT;}
+<COMMENT>\*\)          { int code = nestComment(); if (code) return code;}
+<COMMENT><<EOF>>       { if (!eof){cool_yylval.error_msg = "EOF in comment";eof=true;return ERROR;}else{return 0;}}
+\(\*                   {commentCounter++; BEGIN COMMENT;}
 \*\)                   {cool_yylval.error_msg = "Unmatched *)"; return ERROR;}
 <INITIAL>--[^\n]*   { }
+
 
  /*
   *  String constants (C syntax)
@@ -84,9 +103,9 @@ CHAR            [^\n\"]
   *  \n \t \b \f, the result is c.
   *
   */
-<STRING>{CHAR}*\"   { int code = add_string(yytext ); if(code) return code; }
-<STRING>{CHAR}*\n   { int code = add_string(yytext); if (code) return code; }
-<STRING>{CHAR}*[^{CHAR}]     { cool_yylval.error_msg = "asdf"; return ERROR;}
+<STRING>{CHAR}*\"   { int code = addString(yytext ); if(code) return code; }
+<STRING>{CHAR}*\n   { int code = addString(yytext); if (code) return code; }
+<STRING><<EOF>>     { if (!eof){cool_yylval.error_msg = "EOF in string constant";eof=true;return ERROR;}else{return 0;}}
 \"                  { string_buf_ptr = string_buf; BEGIN STRING; }
 
 
@@ -94,31 +113,14 @@ CHAR            [^\n\"]
  /*
   *  The multiple-character operators.
   */
-\+                       { return '+';  }
-\*                       { return '*';  }
-\-                       { return '-';  }
-\~                       { return '~';  }
-\/                       { return '/';  }
-\;                       { return ';';  }
-\(                       { return '(';  }
-\)                       { return ')';  }
-\{                       { return '{';  }
-\}                       { return '}';  }
-\:                       { return ':';  }
-\.                       { return '.';  }
-\@                       { return '@';  }
-\<                       { return '<';  }
-\=                       { return '=';  }
-\,                       { return ',';  }
-
+{SINGLE_TOKEN} { return yytext[0];}
 
  /*
   * Keywords are case-insensitive except for the values true and false,
   * which must begin with a lower-case letter.
   */
-
-t[r|R][u|U][e|E]                   { cool_yylval.boolean = true ; return BOOL_CONST;}
-f[a|A][l|L][s|S][e|E]                   { cool_yylval.boolean = false; return BOOL_CONST;}
+t[r|R][u|U][e|E]                         { cool_yylval.boolean = true ; return BOOL_CONST;}
+f[a|A][l|L][s|S][e|E]                    { cool_yylval.boolean = false; return BOOL_CONST;}
 [C|c][l|L][a|A][S|s][S|s]                { return CLASS; }
 [E|e][l|L][s|S][e|E]                     { return ELSE;  }
 [F|f][I|i]                               { return FI; }
@@ -140,18 +142,17 @@ f[a|A][l|L][s|S][e|E]                   { cool_yylval.boolean = false; return BO
 =>                                       { return DARROW; }
 [n|N][O|o][T|t]                          { return NOT; }
 
-[a-z]([A-Za-z_0-9])*     { cool_yylval.symbol = stringtable.add_string(yytext); return OBJECTID;}
-[A-Z]([A-Za-z_0-9])*       { cool_yylval.symbol = stringtable.add_string(yytext); return TYPEID;}
-[0-9]+                  { cool_yylval.symbol = inttable.add_string(yytext); return INT_CONST;}
+{ID}                                     { cool_yylval.symbol = stringtable.add_string(yytext); return OBJECTID;}
+{TYPE}                                   { cool_yylval.symbol = stringtable.add_string(yytext); return TYPEID;  }
+{NUMBER}                                 { cool_yylval.symbol = inttable.add_string(yytext); return INT_CONST;  }
 
-[ \t\f\v\r]+              { }
-\n                        {curr_lineno++;}
-[^a-zA-Z0-9]              {cool_yylval.error_msg = yytext; return ERROR;}
+{SPACE}                                  { }
+\n                                       { curr_lineno++; }
+{INVALID}                                { cool_yylval.error_msg = yytext; return ERROR; }
 
 
 %%
-
-int add_string(char *s)
+int addString(char *s)
 {
     size_t size = strlen(s);
     bool more = false;
@@ -159,7 +160,7 @@ int add_string(char *s)
     for(size_t i = 0;i<size;i++){
 	if (string_buf_ptr - string_buf >= MAX_STR_CONST){
 	    cool_yylval.error_msg = "String constant too long";
-	    reset_state();
+	    resetState();
 	    return ERROR;
 	}
 	if (s[i] == '\\'){
@@ -189,12 +190,12 @@ int add_string(char *s)
 
 	if (s[i] == '\"'){
 	    cool_yylval.symbol = stringtable.add_string(string_buf);
-	    reset_state();
+	    resetState();
 	    return STR_CONST;
 	} 
 
         if (s[i] == '\n'){
-	    reset_state();
+	    resetState();
 	    cool_yylval.error_msg = "Unterminated string constant";
 	    return ERROR;
 	} 
@@ -204,10 +205,28 @@ int add_string(char *s)
 
     if (!more){
 	cool_yylval.error_msg = "String contains null character";
-	reset_state();
+	resetState();
 	return ERROR;
     } 
 
     return 0;
 
+}
+
+int nestComment(){
+    commentCounter--;
+
+    if(commentCounter < 0){
+	cool_yylval.error_msg = "Unmatched *)"; 
+        return ERROR;
+    } else if (commentCounter==0) { 
+	BEGIN 0;
+    }
+    return 0;
+}
+
+void resetState(){
+    memset(string_buf, 0, sizeof(string_buf));
+    string_buf_ptr = string_buf;
+    BEGIN 0;
 }
